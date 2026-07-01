@@ -1,59 +1,46 @@
 import sqlite3
 from openai import OpenAI
 
-# Initialize the client pointing to your local LM Studio server
-# The API key is not actually checked by LM Studio, so we pass a placeholder.
 client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
 
 def get_db_schema():
+    # We pass a clean, literal schema string to the LLM
+    return """
+    Table: accounts (account_id INTEGER, customer_name TEXT, balance REAL)
+    Table: transactions (tx_id INTEGER, account_id INTEGER, amount REAL, tx_date TEXT)
     """
-    Extracts table and column names from the SQLite database
-    to provide the LLM with context (the 'map').
-    """
-    conn = sqlite3.connect('bank_data.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-    tables = cursor.fetchall()
-    schema = ""
-    for table in tables:
-        cursor.execute(f"PRAGMA table_info({table[0]})")
-        columns = cursor.fetchall()
-        schema += f"Table: {table[0]}, Columns: {[col[1] for col in columns]}\n"
-    conn.close()
-    return schema
 
 def generate_and_run_sql(user_question):
     schema = get_db_schema()
     
-    # SYSTEM PROMPT: Defines the AI's boundaries.
-    # We strictly limit the AI to SELECT queries for security.
-system_prompt = (
-        "You are a Meezan Bank data analyst assistant. "
-        "Return ONLY a single, valid SQLite SELECT statement. "
-        "Do not provide explanations, do not provide multiple queries, do not use markdown blocks. "
-        "If the user asks a question, translate it to a query. "
-        "If you cannot answer with a SELECT query, return 'ERROR'."
+    # SYSTEM PROMPT: Now strictly formatted to prevent hallucinations
+    system_prompt = (
+        "You are a Meezan Bank Data Analyst. Convert natural language to a SINGLE valid SQLite SELECT statement. "
+        "Use only these tables and columns:\n" + schema + "\n"
+        "Return ONLY the SQL string. Do not explain, do not add markdown (like ```sql), do not use multiple lines."
     )
     
-    # STAGE 2: Reasoning Phase (Send to LM Studio)
     try:
         response = client.chat.completions.create(
-            model="local-model", # The specific name doesn't matter for LM Studio
+            model="local-model",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Schema:\n{schema}\n\nQuestion: {user_question}"}
+                {"role": "user", "content": f"Question: {user_question}"}
             ],
-            temperature=0  # Set to 0 for maximum logic/consistency
+            temperature=0
         )
         sql_query = response.choices[0].message.content.strip()
+        # Remove markdown artifacts if the model ignores our instruction
+        sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
+        
     except Exception as e:
         return f"LLM Error: {e}"
     
-    # STAGE 3: Guardrail
+    # SAFETY: Ensure only SELECT
     if not sql_query.upper().startswith("SELECT"):
-        return "Error: Security violation. Only SELECT queries are permitted."
+        return f"Security Error: Model attempted to run non-SELECT query: {sql_query}"
     
-    # STAGE 4: Execution Phase
+    # EXECUTION: Single statement check
     try:
         conn = sqlite3.connect('bank_data.db')
         cursor = conn.cursor()
@@ -64,29 +51,15 @@ system_prompt = (
     except Exception as e:
         return f"Database Error: {e}"
 
-
 def analyze_results(user_question, sql_results):
-    """
-    Takes raw SQL data and turns it into professional banking insights.
-    """
-    # We pass the question and the data back to Llama 3.1 8B for interpretation
-    analysis_prompt = (
-        f"User Question: '{user_question}'\n"
-        f"Database Result: {sql_results}\n"
-        "Act as a Meezan Bank Branch Manager Assistant. "
-        "Summarize this data professionally. "
-        "If the data is numerical, suggest if this is a positive/negative trend. "
-        "Keep it concise, professional, and actionable."
+    # This remains the same as before
+    prompt = (
+        f"User asked: {user_question}\n"
+        f"SQL Result: {sql_results}\n"
+        "Summarize this for a Branch Manager. Be professional, indicate trends if possible, and suggest one action."
     )
-    
     response = client.chat.completions.create(
         model="local-model",
-        messages=[{"role": "user", "content": analysis_prompt}]
+        messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content
-
-# --- Test ---
-if __name__ == "__main__":
-    question = "What is the balance for Dawar Malik?"
-    print(f"Question: {question}")
-    print(f"Result: {generate_and_run_sql(question)}")
