@@ -27,11 +27,12 @@ def generate_and_run_sql(user_question):
     
     # SYSTEM PROMPT: Defines the AI's boundaries.
     # We strictly limit the AI to SELECT queries for security.
-    system_prompt = (
-        "You are a banking database assistant. "
-        "Return ONLY valid SQLite SQL code. "
-        "Strictly ONLY SELECT statements are allowed. "
-        "If the user asks for anything else (DELETE, DROP, UPDATE), refuse it."
+system_prompt = (
+        "You are a Meezan Bank data analyst assistant. "
+        "Return ONLY a single, valid SQLite SELECT statement. "
+        "Do not provide explanations, do not provide multiple queries, do not use markdown blocks. "
+        "If the user asks a question, translate it to a query. "
+        "If you cannot answer with a SELECT query, return 'ERROR'."
     )
     
     # STAGE 2: Reasoning Phase (Send to LM Studio)
